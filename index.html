@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gold Trader Suite</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; font-family: system-ui, sans-serif; }
+  body { background: #0d1117; color: #e6edf3; padding: 20px; }
+  h1 { color: #f0b429; margin-bottom: 5px; }
+  .sub { color: #8b949e; margin-bottom: 25px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; }
+  .card h2 { font-size: 1rem; color: #58a6ff; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px; }
+  label { display: block; font-size: 0.85rem; color: #8b949e; margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d;
+    border-radius: 8px; color: #e6edf3; font-size: 1rem; }
+  button { width: 100%; margin-top: 15px; padding: 12px; background: #f0b429; color: #000;
+    border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; }
+  button.secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+  .result { margin-top: 15px; padding: 15px; background: #0d1117; border-radius: 8px;
+    font-size: 1.3rem; font-weight: bold; color: #3fb950; text-align: center; display: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 10px; overflow-x:auto; display:block; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid #30363d; white-space: nowrap; }
+  th { color: #8b949e; }
+  .win { color: #3fb950; } .loss { color: #f85149; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
+  .stat { flex: 1; min-width: 100px; background: #0d1117; padding: 12px; border-radius: 8px; text-align: center; }
+  .stat .val { font-size: 1.3rem; font-weight: bold; color: #f0b429; }
+  .stat .lbl { font-size: 0.75rem; color: #8b949e; }
+</style>
+</head>
+<body>
+<h1>🥇 Gold Trader Suite</h1>
+<p class="sub">XAUUSD Position Calculator & Performance Tracker</p>
+
+<!-- DAILY LIMIT BANNER -->
+<div id="limitBanner" style="display:none; margin-bottom:20px; padding:14px;
+  background:#2d1214; border:1px solid #f85149; border-radius:10px;
+  font-weight:bold; color:#f85149;"></div>
+
+<div class="grid">
+
+  <!-- CALCULATOR -->
+  <div class="card">
+    <h2>Position Size Calculator</h2>
+    <label>Account Balance ($)</label>
+    <input type="number" id="balance" value="10000">
+    <label>Risk per Trade (%)</label>
+    <input type="number" id="riskPct" value="1" step="0.1">
+    <label>Daily Loss Limit (%)</label>
+    <input type="number" id="dailyLimit" value="2" step="0.5">
+    <label>Entry Price</label>
+    <input type="number" id="entry" step="0.01" placeholder="2320.50">
+    <label>Stop Loss Price</label>
+    <input type="number" id="sl" step="0.01" placeholder="2317.00">
+    <button onclick="calc()">Calculate Lot Size</button>
+    <div class="result" id="calcResult"></div>
+  </div>
+
+  <!-- LOG TRADE -->
+  <div class="card">
+    <h2>Log Trade</h2>
+    <label>Date</label>
+    <input type="date" id="tDate">
+    <label>Direction</label>
+    <select id="tDir"><option>BUY</option><option>SELL</option></select>
+    <label>Entry Time (hour)</label>
+    <select id="tHour"><option value="">--</option></select>
+    <label>Lots</label>
+    <input type="number" id="tLots" step="0.01">
+    <label>Entry Price</label>
+    <input type="number" id="tEntry" step="0.01">
+    <label>Stop Loss Price</label>
+    <input type="number" id="tSL" step="0.01">
+    <label>P/L ($)</label>
+    <input type="number" id="tPnl" step="0.01">
+    <label>Setup / Notes</label>
+    <input type="text" id="tNote" placeholder="Breakout, OB retest...">
+    <button onclick="addTrade()">Save Trade</button>
+    <button class="secondary" onclick="exportCSV()">Export CSV Backup</button>
+  </div>
+
+</div>
+
+<!-- DASHBOARD -->
+<div class="card" style="margin-top:20px">
+  <h2>Performance Dashboard</h2>
+  <div class="stats" id="stats"></div>
+  <canvas id="equityChart" height="80"></canvas>
+  <table id="tradeTable"><thead><tr>
+    <th>Date</th><th>Hour</th><th>Dir</th><th>Lots</th><th>P/L</th><th>R</th><th>Note</th><th></th>
+  </tr></thead><tbody></tbody></table>
+</div>
+
+<!-- HEATMAP -->
+<div class="card" style="margin-top:20px">
+  <h2>Performance by Hour (Session Heatmap)</h2>
+  <div id="heatmap" style="display:grid; grid-template-columns: repeat(12, 1fr); gap:4px;"></div>
+  <p style="color:#8b949e; font-size:0.8rem; margin-top:10px;">
+    Green = profit · Red = loss · Intensity = size. Hover for details.<br>
+    Key gold sessions: London ~07–10 GMT · NY ~12–16 GMT</p>
+</div>
+
+<script>
+const KEY = 'gold_trades';
+let chart;
+
+// Populate hour dropdown
+(function () {
+  const sel = document.getElementById('tHour');
+  for (let h = 0; h < 24; h++) {
+    const opt = document.createElement('option');
+    opt.value = h;
+    opt.textContent = `${String(h).padStart(2,'0')}:00`;
+    sel.appendChild(opt);
+  }
+})();
+
+// ---------- CALCULATOR ----------
+function calc() {
+  const bal = +balance.value, risk = +riskPct.value;
+  const slDist = Math.abs(+entry.value - +sl.value);
+  if (!bal || !slDist) return alert('Fill entry & SL');
+  const riskUsd = bal * risk / 100;
+  const lots = riskUsd / (slDist * 100);
+  const r = calcResult;
+  r.style.display = 'block';
+  r.textContent = `${lots.toFixed(2)} lots | Risk: riskUsd.toFixed(2)∣SLdistance:{riskUsd.toFixed(2)} | SL distance:riskUsd.toFixed(2)∣SLdistance:{slDist.toFixed(2)}`;
+}
+
+// ---------- DATA ----------
+function getTrades() {
+  return JSON.parse(localStorage.getItem(KEY) || '[]');
+}
+
+function addTrade() {
+  const e = +tEntry.value, s = +tSL.value;
+  const slDist = (e && s) ? Math.abs(e - s) : null;
+  const t = {
+    date: tDate.value || new Date().toISOString().slice(0,10),
+    dir: tDir.value,
+    lots: +tLots.value,
+    pnl: +tPnl.value,
+    slDist: slDist,
+    hour: tHour.value !== '' ? +tHour.value : null,
+    note: tNote.value
+  };
+  const trades = getTrades();
+  trades.push(t);
+  localStorage.setItem(KEY, JSON.stringify(trades));
+  tEntry.value = ''; tSL.value = ''; tPnl.value = ''; tNote.value = '';
+  render();
+}
+
+function delTrade(i) {
+  const trades = getTrades();
+  trades.splice(i, 1);
+  localStorage.setItem(KEY, JSON.stringify(trades));
+  render();
+}
+
+// ---------- METRICS ----------
+function rMultiple(t) {
+  if (!t.slDist) return null;
+  const riskUsd = t.slDist * t.lots * 100;
+  return riskUsd ? t.pnl / riskUsd : null;
+}
+
+// ---------- DAILY CIRCUIT BREAKER ----------
+function checkDailyLimit() {
+  const bal = +balance.value, limitPct = +dailyLimit.value / 100;
+  const today = new Date().toISOString().slice(0,10);
+  const todayLoss = getTrades()
+    .filter(t => t.date === today)
+    .reduce((s,t) => s + Math.min(t.pnl, 0), 0);
+  const banner = document.getElementById('limitBanner');
+  if (!banner) return;
+  banner.style.display = 'block';
+  if (todayLoss <= -(bal * limitPct)) {
+    banner.style.background = '#2d1214';
+    banner.style.borderColor = '#f85149';
+    banner.style.color = '#f85149';
+    banner.textContent = `🛑 DAILY LIMIT HIT — Loss: Math.abs(todayLoss).toFixed(2)of{Math.abs(todayLoss).toFixed(2)} ofMath.abs(todayLoss).toFixed(2)of{(bal*limitPct).toFixed(0)} allowed. STOP TRADING TODAY.`;
+  } else {
+    const remaining = (bal * limitPct) + todayLoss;
+    banner.style.background = '#12261a';
+    banner.style.borderColor = '#3fb950';
+    banner.style.color = '#3fb950';
+    banner.textContent = `✅ Daily risk remaining: Math.max(remaining,0).toFixed(2)(used{Math.max(remaining,0).toFixed(2)} (usedMath.max(remaining,0).toFixed(2)(used{Math.abs(todayLoss).toFixed(2)})`;
+  }
+}
+
+// ---------- HEATMAP ----------
+function renderHeatmap(trades) {
+  const hourly = {};
+  trades.forEach(t => {
+    if (t.hour === null || t.hour === undefined) return;
+    if (!hourly[t.hour]) hourly[t.hour] = { pnl: 0, n: 0 };
+    hourly[t.hour].pnl += t.pnl;
+    hourly[t.hour].n++;
+  });
+
+  const values = Object.values(hourly).map(h => Math.abs(h.pnl));
+  const maxAbs = Math.max(...values, 1);
+
+  let html = '';
+  for (let h = 0; h < 24; h++) {
+    const d = hourly[h];
+    if (!d) {
+      html += `<div title="${String(h).padStart(2,'0')}:00 — no trades"
+        style="aspect-ratio:1; background:#21262d; border-radius:4px;"></div>`;
+      continue;
+    }
+    const intensity = Math.abs(d.pnl) / maxAbs;
+    const color = d.pnl >= 0
+      ? `rgba(63,185,80,${0.25 + intensity*0.75})`
+      : `rgba(248,81,73,${0.25 + intensity*0.75})`;
+    html += `<div title="String(h).padStart(2,′0′):00—{String(h).padStart(2,'0')}:00 —String(h).padStart(2,′0′):00—{d.n} trades, P/L {d.pnl.toFixed(2)}"
+      style="aspect-ratio:1; background:${color}; border-radius:4px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:0.6rem; color:#fff;">${h}</div>`;
+  }
+  document.getElementById('heatmap').innerHTML = html;
+}
+
+// ---------- MAIN RENDER ----------
+function render() {
+  const trades = getTrades().sort((a,b) => a.date.localeCompare(b.date));
+
+  // Table
+  document.querySelector('#tradeTable tbody').innerHTML = trades.map((t,i) => {
+    const r = rMultiple(t);
+    const rTxt = r === null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
+    const rCls = r === null ? '' : (r >= 0 ? 'win' : 'loss');
+    return `<tr><td>${t.date}</td><td>${t.hour !== null && t.hour !== undefined ? String(t.hour).padStart(2,'0')+':00' : '—'}</td>
+      <td>${t.dir}</td><td>${t.lots}</td>
+      <td class="${t.pnl >= 0 ? 'win' : 'loss'}">{t.pnl.toFixed(2)}</td>
+      <td class="rCls">{rCls}">rCls">{rTxt}</td>
+      <td>${t.note}</td>
+      <td><a href="#" onclick="delTrade(${i});return false">❌</a></td></tr>`;
+  }).join('');
+
+  // Stats
+  const wins = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl <= 0);
+  const total = trades.reduce((s,t) => s + t.pnl, 0);
+  const wr = trades.length ? (wins.length/trades.length*100).toFixed(1) : 0;
+  const avgW = wins.length ? wins.reduce((s,t)=>s+t.pnl,0)/wins.length : 0;
+  const avgL = losses.length ? Math.abs(losses.reduce((s,t)=>s+t.pnl,0)/losses.length) : 0;
+  const rs = trades.map(rMultiple).filter(r => r !== null);
+  const expectancy = rs.length ? rs.reduce((s,r)=>s+r,0)/rs.length : 0;
+  const totalR = rs.length ? rs.reduce((s,r)=>s+r,0) : null;
+
+  stats.innerHTML = `
+    <div class="stat"><div class="val">${trades.length}</div><div class="lbl">TRADES</div></div>
+    <div class="stat"><div class="val" style="color:{total>=0?'#3fb950':'#f85149'}">${total.toFixed(2)}</div><div class="lbl">NET P/L</div></div>
+    <div class="stat"><div class="val">${wr}%</div><div class="lbl">WIN RATE</div></div>
+    <div class="stat"><div class="val">${avgL ? (avgW/avgL).toFixed(2) : '∞'}</div><div class="lbl">PROFIT FACTOR RATIO</div></div>
+    <div class="stat"><div class="val" style="color:{expectancy>=0?'#3fb950':'#f85149'}">{expectancy.toFixed(2)}R</div><div class="lbl">EXPECTANCY PER TRADE</div></div>
+    <div class="stat"><div class="val">${totalR !== null ? totalR.toFixed(1)+'R' : '—'}</div><div class="lbl">TOTAL R GAINED</div></div>`;
+
+  // Equity curve
+  let eq = 0;
+  const curve = trades.map(t => (eq += t.pnl));
+  if (chart) chart.destroy();
+  chart = new Chart(equityChart, {
+    type: 'line',
+    data: {
+      labels: trades.map(t=>t.date),
+      datasets: [{ label: 'Equity Curve', data: curve,
+        borderColor: '#f0b429', tension: 0.3, fill: false }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color:'#8b949e' }, grid:{color:'#21262d'} },
+        y: { ticks: { color:'#8b949e' }, grid:{color:'#21262d'} }
+      }
+    }
+  });
+
+  renderHeatmap(trades);
+  checkDailyLimit();
+}
+
+// ---------- EXPORT ----------
+function exportCSV() {
+  const rows = ['date,hour,dir,lots,pnl,sl_dist,note',
+    ...getTrades().map(t =>
+      `t.date,{t.date},t.date,{t.hour ?? ''},t.dir,{t.dir},t.dir,{t.lots},t.pnl,{t.pnl},t.pnl,{t.slDist ?? ''},"${t.note}"`)]
+    .join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows], {type:'text/csv'}));
+  a.download = 'gold_trades_backup.csv';
+  a.click();
+}
+
+render();
+</script>
+</body>
+</html>
