@@ -3,7 +3,6 @@
 A free, private, browser-based position size calculator and performance
 tracker built specifically for XAUUSD traders.
 
-**Live demo:** `https://YOURUSERNAME.github.io/gold-trader-suite/`
 
 ## Features
 - ✅ XAUUSD lot calculator ($100/pip math built-in)
